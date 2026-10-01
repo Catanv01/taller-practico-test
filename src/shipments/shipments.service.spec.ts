@@ -4,21 +4,24 @@ import { getRepositoryToken } from '@nestjs/typeorm';
 import { ShipmentEntity } from './entities/shipment.entity';
 import { ShipmentRulesService } from './shipment-rules.service';
 import { ShipmentStatus } from './shipment-status.enum';
-import { describe, it, expect, jest, beforeEach } from "@jest/globals";
+import { describe, it, expect, beforeEach, jest } from "@jest/globals";
 import { ShipmentsService } from "./shipments.service";
+import { FindOptionsWhere } from 'typeorm';
 
 describe('ShipmentsService', () => {
   let service: ShipmentsService;
 
   const repositoryMock = {
-    find: jest.fn(),
-    findOneBy: jest.fn(),
-    create: jest.fn(),
-    save: jest.fn(),
+    find: jest.fn<() => Promise<ShipmentEntity[]>>(),
+    findOneBy: jest.fn<
+      (where: FindOptionsWhere<ShipmentEntity>) => Promise<ShipmentEntity | null>
+    >(),
+    create: jest.fn<(data: Partial<ShipmentEntity>) => ShipmentEntity>(),
+    save: jest.fn<(entity: ShipmentEntity) => Promise<ShipmentEntity>>(),
   };
 
   const rulesServiceMock = {
-    ensureCanBeDispatched: jest.fn(),
+    ensureCanBeDispatched: jest.fn<(shipment: ShipmentEntity) => void>(),
   };
 
     beforeEach(async () => {
@@ -78,4 +81,43 @@ describe('ShipmentsService', () => {
     // Assert
     await expect(promise).rejects.toBeInstanceOf(NotFoundException);
   });
-  
+
+    it('creates and saves a shipment', async () => {
+    // Arrange
+    const data = { trackingCode: 'SHIP-100', destination: 'Cali' };
+    const built = { ...data, status: ShipmentStatus.CREATED } as ShipmentEntity;
+    const saved = { ...built, id: 1 } as ShipmentEntity;
+    repositoryMock.create.mockReturnValue(built);
+    repositoryMock.save.mockResolvedValue(saved);
+
+    // Act
+    const result = await service.create(data);
+
+    // Assert
+    expect(repositoryMock.create).toHaveBeenCalledWith({
+      ...data,
+      status: ShipmentStatus.CREATED,
+    });
+    expect(repositoryMock.save).toHaveBeenCalledWith(built);
+    expect(result).toEqual(saved);
+  });
+
+  it('dispatches and saves a valid shipment', async () => {
+    // Arrange
+    const shipment = { id: 5, status: ShipmentStatus.CREATED } as ShipmentEntity;
+    const updated = { ...shipment, status: ShipmentStatus.DISPATCHED } as ShipmentEntity;
+    repositoryMock.findOneBy.mockResolvedValue(shipment);
+    repositoryMock.save.mockResolvedValue(updated);
+    rulesServiceMock.ensureCanBeDispatched.mockReturnValue(undefined);
+
+    // Act
+    const result = await service.dispatch(5);
+
+    // Assert
+    expect(rulesServiceMock.ensureCanBeDispatched).toHaveBeenCalledWith(shipment);
+    expect(repositoryMock.save).toHaveBeenCalledWith(
+      expect.objectContaining({ status: ShipmentStatus.DISPATCHED }),
+    );
+    expect(result).toEqual(updated);
+  });
+})
